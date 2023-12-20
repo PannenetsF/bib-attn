@@ -181,11 +181,6 @@ def attention_score_lazy_balance(
     assert score_tensor.shape[-1] == chunk_size
     chunk_num = math.floor((max_length + chunk_size - 1) / chunk_size)
     
-
-    assert max_length == debug_dict['max_length']
-    assert chunk_num == debug_dict['chunk_num']
-    assert chunk_size == debug_dict['chunk_size']
-    
     if chunk_to_block is None and chunk_to_req is None:
         chunk_to_req = torch.zeros(bs, chunk_num, dtype=torch.int32).cuda() - 1
         chunk_to_block = torch.zeros(bs, chunk_num, dtype=torch.int32).cuda() - 1
