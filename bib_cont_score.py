@@ -4,6 +4,8 @@ import triton
 import triton.language as tl
 import math
 
+from balance import balance as balance_block, validate as validate_block
+
 @triton.jit
 def bib_attention_score_kernel(
     q_tensor, 
@@ -110,6 +112,113 @@ def attention_score(
         h,
         bs
     )
+
+
+
+@torch.no_grad()
+def attention_score_balance(
+    q_tensor,
+    k_cache,
+    k_start,
+    k_length,
+    score_tensor,
+    chunk_size=4,
+    debug_dict={}
+):
+    bs, H, h = q_tensor.shape
+    max_length = k_length.max().item()
+    assert score_tensor.shape[-1] == chunk_size
+    chunk_num = math.floor((max_length + chunk_size - 1) / chunk_size)
+    
+
+    assert max_length == debug_dict['max_length']
+    assert chunk_num == debug_dict['chunk_num']
+    assert chunk_size == debug_dict['chunk_size']
+    chunk_to_req = torch.zeros(bs, chunk_num, dtype=torch.int32).cuda() - 1
+    chunk_to_block = torch.zeros(bs, chunk_num, dtype=torch.int32).cuda() - 1
+    rounded_k_length = torch.ceil(k_length.float() / chunk_size).to(torch.int32)
+    assert rounded_k_length.max().item() == chunk_num
+    chunk_to_req, chunk_to_block = balance_block(rounded_k_length.cpu())
+    chunk_to_req, chunk_to_block = chunk_to_req.cuda(), chunk_to_block.cuda()
+    grid = (bs, H, chunk_to_req.shape[-1])
+
+    bib_attention_score_kernel[grid](
+        q_tensor,
+        q_tensor.stride(0), q_tensor.stride(1), q_tensor.stride(2), # bs, H, h
+        k_cache,
+        k_cache.stride(0), k_cache.stride(1), k_cache.stride(2), # D, H, h
+        k_start,
+        k_start.stride(0), # bs
+        k_length,
+        k_length.stride(0), # bs
+        score_tensor,
+        score_tensor.stride(0), score_tensor.stride(1), score_tensor.stride(2), score_tensor.stride(3),
+        chunk_to_req,
+        chunk_to_req.stride(0), chunk_to_req.stride(1),
+        chunk_to_block,
+        chunk_to_block.stride(0), chunk_to_block.stride(1),
+        chunk_num,
+        chunk_size,
+        H,
+        h,
+        bs
+    )
+
+@torch.no_grad()
+def attention_score_lazy_balance(
+    q_tensor,
+    k_cache,
+    k_start,
+    k_length,
+    score_tensor,
+    chunk_size=4,
+    debug_dict={},
+    chunk_to_block=None,
+    chunk_to_req=None,
+):
+    bs, H, h = q_tensor.shape
+    max_length = k_length.max().item()
+    assert score_tensor.shape[-1] == chunk_size
+    chunk_num = math.floor((max_length + chunk_size - 1) / chunk_size)
+    
+
+    assert max_length == debug_dict['max_length']
+    assert chunk_num == debug_dict['chunk_num']
+    assert chunk_size == debug_dict['chunk_size']
+    
+    if chunk_to_block is None and chunk_to_req is None:
+        chunk_to_req = torch.zeros(bs, chunk_num, dtype=torch.int32).cuda() - 1
+        chunk_to_block = torch.zeros(bs, chunk_num, dtype=torch.int32).cuda() - 1
+        rounded_k_length = torch.ceil(k_length.float() / chunk_size).to(torch.int32)
+        assert rounded_k_length.max().item() == chunk_num
+        chunk_to_req, chunk_to_block = balance_block(rounded_k_length.cpu())
+        chunk_to_req, chunk_to_block = chunk_to_req.cuda(), chunk_to_block.cuda()
+    elif chunk_to_block is None or chunk_to_req is None:
+        raise ValueError("chunk_to_block and chunk_to_req should be both None or both not None")
+    grid = (bs, H, chunk_to_req.shape[-1])
+
+    bib_attention_score_kernel[grid](
+        q_tensor,
+        q_tensor.stride(0), q_tensor.stride(1), q_tensor.stride(2), # bs, H, h
+        k_cache,
+        k_cache.stride(0), k_cache.stride(1), k_cache.stride(2), # D, H, h
+        k_start,
+        k_start.stride(0), # bs
+        k_length,
+        k_length.stride(0), # bs
+        score_tensor,
+        score_tensor.stride(0), score_tensor.stride(1), score_tensor.stride(2), score_tensor.stride(3),
+        chunk_to_req,
+        chunk_to_req.stride(0), chunk_to_req.stride(1),
+        chunk_to_block,
+        chunk_to_block.stride(0), chunk_to_block.stride(1),
+        chunk_num,
+        chunk_size,
+        H,
+        h,
+        bs
+    )
+    return chunk_to_block, chunk_to_req
 
 def _cos_of_tensors(a, b):
     assert a.shape == b.shape
