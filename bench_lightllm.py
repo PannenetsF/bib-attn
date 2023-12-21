@@ -5,6 +5,7 @@ import triton
 import math
 from lightllm_score import token_att_fwd
 from bib_cont_score import attention_score_lazy_balance
+from balance import validate as validate_param
 
 
 def prepare_light(min_length, max_length, batch, head_num, head_dim, chunk_size, mean_ratio, std_ratio, outlier_ratio):
@@ -57,6 +58,7 @@ def prepare_bib(min_length, max_length, batch, head_num, head_dim, chunk_size, m
     args = q_tensor, k_cache, k_start, k_length, score_tensor, chunk_size, {}, chunk_to_block, chunk_to_req
     args = [arg.cuda().contiguous() if isinstance(arg, torch.Tensor) else arg for arg in args]
     chunk_to_block, chunk_to_req = attention_score_lazy_balance(*args)
+    assert validate_param(torch.ceil(k_length.float() / chunk_size).to(torch.int32), chunk_to_req, chunk_to_block)
     args = q_tensor, k_cache, k_start, k_length, score_tensor, chunk_size, {}, chunk_to_block, chunk_to_req
     return args
 
@@ -64,7 +66,7 @@ def bench(max_length, head_num, head_dim, chunk_size, mean_ratio=0.3, std_ratio=
     @triton.testing.perf_report(
         triton.testing.Benchmark(
             x_names=['batch'],  
-            x_vals=[2**i for i in range(1, 10, 1)],  
+            x_vals=[2**i for i in range(1, 8, 1)],  
             x_log=True,  
             line_arg='provider',  
             line_vals=['lightllm', 'bib'],  
@@ -93,4 +95,4 @@ def bench(max_length, head_num, head_dim, chunk_size, mean_ratio=0.3, std_ratio=
 if __name__ == '__main__':
     torch.manual_seed(0)
     torch.cuda.manual_seed(0)
-    bench(1024, 32, 32, 32)
+    bench(3072, 32, 32, 128)
