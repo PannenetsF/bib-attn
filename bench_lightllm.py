@@ -6,7 +6,7 @@ import math
 from lightllm_score import token_att_fwd
 from bib_cont_score import attention_score_lazy_balance
 from balance import validate as validate_param
-from bib_gqa_ref import bib_gqa_ref_qk_mul, bib_gqa_ref_qk_mul_remove_block, bib_gqa_ref_qk_mul_remove_k_load, bib_gqa_ref_qk_mul_length_mask, bib_gqa_ref_qk_mul_length_mask_fused
+from bib_gqa_ref import bib_gqa_ref_qk_mul_length_mask, bib_gqa_ref_qk_mul_length_mask_fused
 
 
 def prepare_light(min_length, max_length, batch, head_num, head_dim, chunk_size, mean_ratio, std_ratio, outlier_ratio):
@@ -166,15 +166,9 @@ def bench(max_length, head_num, head_dim, chunk_size, mean_ratio=0.3, std_ratio=
             args = [arg.cuda().contiguous() if isinstance(arg, torch.Tensor) else arg for arg in args]
             p50, p20, p80 = triton.testing.do_bench(lambda: attention_score_lazy_balance(*args), quantiles=quantiles)
         elif 'gqa' in provider:
-            preparefn = prepare_bib_gqa
-            if provider == 'gqa':
-                callfn = bib_gqa_ref_qk_mul
-            elif provider == 'gqa-remove-k':
-                callfn = bib_gqa_ref_qk_mul_remove_k_load
-            elif provider == 'gqa-remove-block':
-                callfn = bib_gqa_ref_qk_mul_remove_block
-            elif provider == 'gqa-len-mask':
+            if provider == 'gqa-len-mask':
                 callfn = bib_gqa_ref_qk_mul_length_mask
+                preparefn = prepare_bib_gqa
             elif provider == 'gqa-fused':
                 preparefn = prepare_bib_gqa_fused
                 callfn = bib_gqa_ref_qk_mul_length_mask_fused

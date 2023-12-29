@@ -1,6 +1,6 @@
 import torch
 import math
-from bib_gqa_ref import bib_gqa_ref_qk_mul, bib_gqa_ref_qk_mul_length_mask
+from bib_gqa_ref import bib_gqa_ref_qk_mul_length_mask, bib_gqa_ref_qk_mul_length_mask_fused
 
 def _cos_of_tensors(a, b):
     assert a.shape == b.shape
@@ -131,4 +131,21 @@ if __name__ == "__main__":
 
     cos = _cos_of_tensors(score_tensor, triton_score_tensor)
     assert cos.item() > 0.9999, f'cosine similarity is {cos.item()}'
+
+    triton_score_tensor = torch.zeros(score_shape, dtype=torch.float32).cuda()
+    block_to_rslc = torch.stack([block_to_request, block_to_start, block_to_length, block_to_chunk], dim=1).cuda()
+
+    bib_gqa_ref_qk_mul_length_mask_fused(
+        q_tensor,
+        k_tensor,
+        triton_score_tensor,
+        block_to_rslc,
+        chunk_size,
+    )
+
+    torch.cuda.synchronize()
+
+    cos = _cos_of_tensors(score_tensor, triton_score_tensor)
+    assert cos.item() > 0.9999, f'cosine similarity is {cos.item()}'
+
     
