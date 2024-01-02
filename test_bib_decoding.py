@@ -1,6 +1,6 @@
 import torch
 import math
-from bib_gqa_ref import bib_decoding, bib_gqa_ref_request_max_reduce, bib_gqa_ref_qkv_score_kernel
+from bib_decoding import bib_decoding, bib_gqa_ref_request_max_reduce, bib_gqa_ref_qkv_score_kernel
 
 
 @torch.no_grad()

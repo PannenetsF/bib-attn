@@ -1,7 +1,7 @@
 import torch
 import math
 
-from lightllm_score import token_att_fwd
+from lightllm_score import token_att_fwd, lightllm_attention
 
 if __name__ == "__main__":
     bs = 4
@@ -17,6 +17,7 @@ if __name__ == "__main__":
     k_start = torch.cat([torch.tensor([0]).cuda(), k_start[:-1]]).contiguous()
     q_tensor = torch.randn(bs, H, h, dtype=torch.float32).cuda() # d
     k_cache = torch.randn(D, H, h, dtype=torch.float32).cuda() # d
+    v_cache = torch.randn(D, H, h, dtype=torch.float32).cuda() # d
     max_length = k_length.max().item()
     chunk_num = math.floor((max_length + chunk_size - 1) / chunk_size)
     score_tensor = torch.zeros(H, D).cuda()
@@ -84,4 +85,18 @@ if __name__ == "__main__":
         k_start,
         k_length,
         target_score.detach().clone().contiguous()
+    )
+
+    output_tensor = torch.zeros(bs, H, h).cuda()
+    lightllm_attention(
+        q_tensor,
+        k_cache,
+        v_cache,
+        output_tensor,
+        req_to_tokens,
+        b_req_idx,
+        b_start_loc,
+        b_seqlen,
+        max_length,
+        H, h, D
     )
