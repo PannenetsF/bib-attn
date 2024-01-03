@@ -1,13 +1,15 @@
+import math
 import os
-import torch
+
 import numpy as np
+import torch
 import triton
 
-import math
-from lightllm_score import lightllm_attention
 from bib_decoding import bib_decoding
+from lightllm_score import lightllm_attention
+from gqa_decoding import  gqa_token_decode_attention_flash_decoding
 
-BENCH_TERM = ['lightllm', 'bib']
+BENCH_TERM = ['lightllm', 'bib', 'gqa']
 
 ARGS_TERMS = {
     'batch': int,
@@ -19,6 +21,7 @@ ARGS_TERMS = {
     'H': int,
     'h': int
 }
+
 
 def prepare_light(min_length, length, batch, H, h, chunk, mean, std, outlier):
     k_norm_length = torch.randn(size=(batch,)) * std + mean
@@ -50,6 +53,7 @@ def prepare_light(min_length, length, batch, H, h, chunk, mean, std, outlier):
         b_seqlen[i] = k_length[i]
     return q_tensor, k_cache, v_cache, output_tensor, req_to_tokens, b_req_idx, b_start_loc, b_seqlen, length, H, h, D
 
+
 def prepare_bib_decoding(min_length, length, batch, H, h, chunk, mean, std, outlier):
     k_norm_length = torch.randn(size=(batch,)) * std + mean
     k_length = (k_norm_length.clamp(0, 1) * length).round().to(torch.int32).clamp(min_length, length)
@@ -71,7 +75,6 @@ def prepare_bib_decoding(min_length, length, batch, H, h, chunk, mean, std, outl
     block_to_request = []
     block_to_start = []
     block_to_chunk = []
-    
 
     for req_idx, (leng, start) in enumerate(zip(k_length, k_start)):
         for chunk_idx in range(math.ceil(leng / chunk)):
@@ -96,46 +99,40 @@ def prepare_bib_decoding(min_length, length, batch, H, h, chunk, mean, std, outl
     block_to_chunk = torch.tensor(block_to_chunk, dtype=torch.int32).cuda()
     block_to_request = torch.tensor(block_to_request, dtype=torch.int32).cuda()
 
-    args = q_tensor, k_cache, v_cache, output_tensor, request_to_block, block_to_request, block_to_start, block_to_length, block_to_chunk, 1/math.sqrt(H), None, None, chunk
+    args = q_tensor, k_cache, v_cache, output_tensor, request_to_block, block_to_request, block_to_start, block_to_length, block_to_chunk, 1 / math.sqrt(
+        H), None, None, chunk
     return args
 
 
-def bench(length, H, h, chunk, mean=0.3, std=0.3, outlier=0.01, min_length=10, save_prefix='.'):
-    @triton.testing.perf_report(
-        triton.testing.Benchmark(
-            x_names=['batch'],  
-            x_vals=[2**i for i in range(1, 9, 1)],  
-            x_log=True,  
-            line_arg='provider',  
-            line_vals=BENCH_TERM,  
-            line_names=BENCH_TERM,
-            # styles=[('blue', '-'), ('red', '-')],  
-            # line_vals=['lightllm', 'bib', 'gqa'],  
-            # line_names=['lightllm', 'bib', 'gqa'],  
-            # styles=[('blue', '-'), ('green', '-'), ('red', '-')],  
-            ylabel='latency',  
-            plot_name=f'attn-C{chunk}',  
-            args={},  
-        ))
-    def benchmark(batch, provider):
-        print(f'benching batch = {batch}, provide = {provider}')
-        quantiles = [0.5, 0.2, 0.8]
-        if provider == 'lightllm':
-            prepare_fn = prepare_light
-            call_fn = lightllm_attention
-        elif provider == 'bib':
-            prepare_fn = prepare_bib_decoding
-            call_fn = bib_decoding
-        else:
-            raise NotImplementedError
-        args = prepare_fn(min_length, length, batch, H, h, chunk, mean, std, outlier)
-        args = [arg.cuda().contiguous() if isinstance(arg, torch.Tensor) else arg for arg in args]
-        p50, p20, p80 = triton.testing.do_bench(lambda: call_fn(*args), quantiles=quantiles)
-        return p50, p20, p80
-    save = f'{save_prefix}/max-{length}-H-{H}-h-{h}-mean-{mean}-std-{std}-out-{outlier}/'
-    os.makedirs(save, exist_ok=True)
-    benchmark.run(show_plots=False, print_data=False, save_path=save)
-    print(f'save to {save}')
+def prepare_gqa(min_length, length, batch, H, h, chunk, mean, std, outlier):
+    k_norm_length = torch.randn(size=(batch,)) * std + mean
+    k_length = (k_norm_length.clamp(0, 1) * length).round().to(torch.int32).clamp(min_length, length)
+    num_outlier = math.ceil(outlier * batch)
+    idx_outlier = torch.multinomial(torch.ones(batch) / batch, num_outlier, replacement=False)
+    for idx in idx_outlier:
+        k_length[idx] = length
+    D = 2 ** k_length.sum().log2().ceil().to(torch.int32)
+    k_start = k_length.cumsum(dim=0)
+    k_start = torch.cat([torch.tensor([0]), k_start[:-1]]).contiguous()
+    q_tensor = torch.randn(batch, H, h, dtype=torch.float32)
+    k_cache = torch.randn(D, H, h, dtype=torch.float32)
+    v_cache = torch.randn(D, H, h, dtype=torch.float32)
+    length = k_length.max().item()
+    output_tensor = torch.ones_like(q_tensor)
+    req_to_tokens = torch.zeros(batch, length, dtype=torch.int32)
+    for i in range(batch):
+        req_to_tokens[i][:k_length[i]] = torch.arange(0, k_length[i]) + k_start[i]
+    b_req_idx = torch.zeros(batch, dtype=torch.int32)
+    for i in range(batch):
+        b_req_idx[i] = i
+    b_start_loc = torch.zeros(batch, dtype=torch.int32)
+    for i in range(batch):
+        b_start_loc[i] = k_start[i]
+    b_seqlen = torch.zeros(batch, dtype=torch.int32)
+    for i in range(batch):
+        b_seqlen[i] = k_length[i]
+    return q_tensor, k_cache, v_cache, output_tensor, b_seqlen, req_to_tokens, b_req_idx, batch, length, H, H
+
 
 def parse_args():
     import argparse
@@ -157,8 +154,8 @@ def parse_args():
         if not _d: continue
         setattr(args, _t, _type(_d))
 
-
     return args
+
 
 def _get_split(args):
     sweep = []
@@ -180,6 +177,7 @@ def _get_split(args):
     split = [dtype(s) for s in split]
     return split
 
+
 def _get_name_and_fn(args, split):
     term = args.mode
     start = getattr(args, f'{term}_start')
@@ -193,18 +191,19 @@ def _get_name_and_fn(args, split):
         if t != args.mode:
             other += f'_{t}_{getattr(args, t)}'
     name = sweep + other
+
     def _bench(args):
         @triton.testing.perf_report(
             triton.testing.Benchmark(
-                x_names=['val'],  
+                x_names=['val'],
                 x_vals=split,
-                x_log=log10,  
-                line_arg='provider',  
-                line_vals=BENCH_TERM,  
+                x_log=log10,
+                line_arg='provider',
+                line_vals=BENCH_TERM,
                 line_names=BENCH_TERM,
-                ylabel='latency',  
-                plot_name=f'{term}',  
-                args={"args": args}, 
+                ylabel='latency',
+                plot_name=f'{term}',
+                args={"args": args},
             ))
         def benchmark(val, provider, args):
             print(f'benching {term} = {val}, provide = {provider}')
@@ -215,11 +214,14 @@ def _get_name_and_fn(args, split):
             elif provider == 'bib':
                 prepare_fn = prepare_bib_decoding
                 call_fn = bib_decoding
+            elif provider == 'gqa':
+                prepare_fn = prepare_gqa
+                call_fn = gqa_token_decode_attention_flash_decoding
             else:
                 raise NotImplementedError
             kwargs = {}
             for t in ARGS_TERMS:
-                d = getattr(args, t) 
+                d = getattr(args, t)
                 if d is None:
                     assert t == term
                 kwargs[t] = d
@@ -228,10 +230,13 @@ def _get_name_and_fn(args, split):
             args = [arg.cuda().contiguous() if isinstance(arg, torch.Tensor) else arg for arg in args]
             p50, p20, p80 = triton.testing.do_bench(lambda: call_fn(*args), quantiles=quantiles)
             return p50, p20, p80
+
         return benchmark
+
     bm = _bench(args)
     os.makedirs(name, exist_ok=True)
     bm.run(show_plots=False, print_data=False, save_path=name)
+
 
 if __name__ == '__main__':
     torch.manual_seed(0)
@@ -239,6 +244,3 @@ if __name__ == '__main__':
     args = parse_args()
     split = _get_split(args)
     _get_name_and_fn(args, split)
-    # bench(3072, 32, 32, 256, mean=0.1)
-    # bench(3072, 32, 32, 256, mean=0.3)
-    # bench(3072, 32, 32, 256, mean=0.5)
