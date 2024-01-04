@@ -1,18 +1,13 @@
+from unittest import TestCase, main
 import math
 
 import torch
 
 from gqa_decoding import gqa_token_decode_attention_flash_decoding
 
-if __name__ == "__main__":
-    bs = 4
-    H = 16
-    h = 16
-    D = 24 * 1000
-    chunk_size = 16
-    max_L = 4 * chunk_size
-    torch.cuda.manual_seed_all(0)
-    torch.manual_seed(0)
+
+def test_gqa_decoding(bs, H, h, chunk_size, max_L):
+    D = bs * max_L
     k_length = torch.randint(2, max_L, (bs,), dtype=torch.int32).cuda()
     k_start = k_length.cumsum(dim=0)
     k_start = torch.cat([torch.tensor([0]).cuda(), k_start[:-1]]).contiguous()
@@ -42,3 +37,13 @@ if __name__ == "__main__":
     gqa_token_decode_attention_flash_decoding(q_tensor, k_cache, v_cache, score_tensor, mid_o, mid_o_logexpsum,
                                               b_seqlen, req_to_tokens, b_req_idx,
                                               bs, max_length, H, H)
+
+
+class TestGQADecoding(TestCase):
+    def test_run(self):
+        test_gqa_decoding(bs=4, H=16, h=16, chunk_size=16, max_L=1024)
+        test_gqa_decoding(bs=63, H=16, h=16, chunk_size=256, max_L=1024)
+
+
+if __name__ == '__main__':
+    main()

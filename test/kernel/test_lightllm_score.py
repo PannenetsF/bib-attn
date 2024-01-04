@@ -1,18 +1,13 @@
+from unittest import TestCase, main
 import math
 
 import torch
 
 from lightllm_score import token_att_fwd, lightllm_attention
 
-if __name__ == "__main__":
-    bs = 4
-    H = 16
-    h = 16
-    D = 24 * 1000
-    chunk_size = 16
-    max_L = 4 * chunk_size
-    torch.cuda.manual_seed_all(0)
-    torch.manual_seed(0)
+
+def lightllm_score_test(bs, H, h, chunk_size, max_L):
+    D = bs * max_L
     k_length = torch.randint(2, max_L, (bs,), dtype=torch.int32).cuda()
     k_start = k_length.cumsum(dim=0)
     k_start = torch.cat([torch.tensor([0]).cuda(), k_start[:-1]]).contiguous()
@@ -37,7 +32,6 @@ if __name__ == "__main__":
 
     token_att_fwd(q_tensor, k_cache, score_tensor, req_to_tokens, b_req_idx, b_start_loc, b_seqlen, max_length)
 
-
     def convert_score_tensor(score_tensor):
         target_score = torch.zeros(bs, H, max_length).cuda()
         for i in range(bs):
@@ -45,16 +39,13 @@ if __name__ == "__main__":
             target_score[i][:, :k_length[i]] = this_score
         return target_score
 
-
     target_score = convert_score_tensor(score_tensor)
-
 
     def _cos_of_tensors(a, b):
         assert a.shape == b.shape
         B = a.shape[0]
         total_cos = torch.nn.functional.cosine_similarity(a.reshape(B, -1), b.reshape(B, -1), dim=-1).mean()
         return total_cos
-
 
     @torch.no_grad()
     def attention_score_torch_test(
@@ -84,7 +75,6 @@ if __name__ == "__main__":
         cos = _cos_of_tensors(score_tensor, triton_score_tensor)
         assert cos.item() > 0.9999, f'cosine similarity is {cos.item()}'
 
-
     attention_score_torch_test(
         q_tensor,
         k_cache,
@@ -106,3 +96,13 @@ if __name__ == "__main__":
         max_length,
         H, h, D
     )
+
+
+class TestLightLLMAttention(TestCase):
+    def test_run(self):
+        lightllm_score_test(bs=4, H=16, h=16, chunk_size=16, max_L=1024)
+        lightllm_score_test(bs=63, H=16, h=16, chunk_size=256, max_L=1024)
+
+
+if __name__ == '__main__':
+    main()
