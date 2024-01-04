@@ -6,11 +6,11 @@ import torch
 import triton
 
 from bib_decoding import bib_decoding
+from flash_decoding import token_decode_attention_flash_decoding
 from gqa_decoding import gqa_token_decode_attention_flash_decoding
 from lightllm_score import lightllm_attention
-from flash_decoding import token_decode_attention_flash_decoding
 
-BENCH_TERM = ['lightllm', 'bib', 'gqa', 'flash']
+BENCH_TERM = ['lightllm', 'bib', 'flash']
 
 ARGS_TERMS = {
     'batch': int,
@@ -177,7 +177,7 @@ def prepare_flash(min_length, length, batch, H, h, chunk, mean, std, outlier):
     return q_tensor, k_cache, v_cache, output_tensor, mid_o, mid_o_logexpsum, req_to_tokens, b_req_idx, b_seqlen, batch, length, H, h, chunk
 
 
-def parse_args():
+def parse_args(args=None):
     import argparse
     parser = argparse.ArgumentParser(description='Argument groups example')
 
@@ -191,7 +191,7 @@ def parse_args():
         parser.add_argument(f'--{_t}_num', type=int, default=10)
         parser.add_argument(f'--{_t}_pot', action='store_true')
         parser.add_argument(f'--{_t}_log10', action='store_true')
-    args = parser.parse_args()
+    args = parser.parse_args(args)
     for _t, _type in ARGS_TERMS.items():
         _d = getattr(args, _t, None)
         if not _d: continue
@@ -225,18 +225,21 @@ def _get_split(args):
     return uniq
 
 
-def _get_name_and_fn(args, split):
+def _get_name_and_fn(args, split, base):
     term = args.mode
     start = getattr(args, f'{term}_start')
     end = getattr(args, f'{term}_end')
     num = getattr(args, f'{term}_num')
     log10 = getattr(args, f'{term}_log10')
+    dtype = ARGS_TERMS[term]
+    start, end = dtype(start), dtype(end)
     sweep = f'sw_{term}_{start}:{end}:{num}'
 
     other = ''
     for t in ARGS_TERMS:
         if t != args.mode:
-            other += f'_{t}_{getattr(args, t)}'
+            dtype = ARGS_TERMS[t]
+            other += f'_{t}_{dtype(getattr(args, t))}'
     name = sweep + other
 
     def _bench(args):
@@ -284,13 +287,19 @@ def _get_name_and_fn(args, split):
         return benchmark
 
     bm = _bench(args)
+    if base is not None:
+        name = os.path.join(base, name)
     os.makedirs(name, exist_ok=True)
     bm.run(show_plots=False, print_data=False, save_path=name)
 
 
-if __name__ == '__main__':
+def main(args=None, base=None):
     torch.manual_seed(0)
     torch.cuda.manual_seed(0)
-    args = parse_args()
+    args = parse_args(args)
     split = _get_split(args)
-    _get_name_and_fn(args, split)
+    _get_name_and_fn(args, split, base)
+
+
+if __name__ == '__main__':
+    main()
