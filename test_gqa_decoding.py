@@ -1,7 +1,8 @@
-import torch
 import math
 
-from gqa_decoding import  gqa_token_decode_attention_flash_decoding
+import torch
+
+from gqa_decoding import gqa_token_decode_attention_flash_decoding
 
 if __name__ == "__main__":
     bs = 4
@@ -33,6 +34,11 @@ if __name__ == "__main__":
     b_seqlen = torch.zeros(bs, dtype=torch.int32).cuda()
     for i in range(bs):
         b_seqlen[i] = k_length[i]
-    gqa_token_decode_attention_flash_decoding(q_tensor, k_cache, v_cache, score_tensor,
+    BLOCK_SEQ = 128
+    mid_o = torch.empty([bs, H, max_length // BLOCK_SEQ + 1, h], dtype=torch.float32,
+                        device="cuda")
+    mid_o_logexpsum = torch.empty([bs, H, max_length // BLOCK_SEQ + 1], dtype=torch.float32,
+                                  device="cuda")
+    gqa_token_decode_attention_flash_decoding(q_tensor, k_cache, v_cache, score_tensor, mid_o, mid_o_logexpsum,
                                               b_seqlen, req_to_tokens, b_req_idx,
                                               bs, max_length, H, H)

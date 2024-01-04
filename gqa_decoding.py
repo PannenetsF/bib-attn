@@ -1,3 +1,8 @@
+# adapted from
+# https://github.com/ModelTC/lightllm/blob/90af2ab2104c516320c54d2bcd366321445064f7/lightllm/models/llama/triton_kernel/gqa_flash_decoding.py
+# https://github.com/ModelTC/lightllm/blob/90af2ab2104c516320c54d2bcd366321445064f7/lightllm/models/llama/triton_kernel/gqa_flash_decoding_stage1.py
+# https://github.com/ModelTC/lightllm/blob/90af2ab2104c516320c54d2bcd366321445064f7/lightllm/models/llama/triton_kernel/gqa_flash_decoding_stage2.py
+
 import numpy as np
 import torch
 import triton
@@ -164,14 +169,13 @@ def flash_decode_stage2(mid_out, mid_out_logexpsum, B_Seqlen, O, block_seq):
     return
 
 
-def gqa_token_decode_attention_flash_decoding(q, cache_k, cache_v, out,
+def gqa_token_decode_attention_flash_decoding(q, cache_k, cache_v, out, mid_o, mid_o_logexpsum,
                                               b_seq_len, req_to_token_indexs, b_req_idx,
-                                              batch_size, max_len_in_batch, q_head_num,
-                                              head_dim, ):
-    BLOCK_SEQ = 128
+                                              batch_size, max_len_in_batch, q_head_num, head_dim,
+                                              BLOCK_SEQ=128):
     calcu_shape1 = (batch_size, q_head_num, head_dim)
 
-    o_tensor = torch.empty_like(q) if out is None else out
+    o_tensor = out
 
     # start_time = time.time()
     b_seq_len_numpy = b_seq_len.cpu().numpy()
@@ -186,10 +190,10 @@ def gqa_token_decode_attention_flash_decoding(q, cache_k, cache_v, out,
 
     assert len(block_batch_ids) == len(block_start_indexes)
 
-    mid_o = torch.empty([batch_size, q_head_num, max_len_in_batch // BLOCK_SEQ + 1, head_dim], dtype=torch.float32,
-                        device="cuda")
-    mid_o_logexpsum = torch.empty([batch_size, q_head_num, max_len_in_batch // BLOCK_SEQ + 1], dtype=torch.float32,
-                                  device="cuda")
+    # mid_o = torch.empty([batch_size, q_head_num, max_len_in_batch // BLOCK_SEQ + 1, head_dim], dtype=torch.float32,
+    #                     device="cuda")
+    # mid_o_logexpsum = torch.empty([batch_size, q_head_num, max_len_in_batch // BLOCK_SEQ + 1], dtype=torch.float32,
+    #                               device="cuda")
 
     flash_decode_stage1(block_batch_ids, block_start_indexes, q.view(calcu_shape1), cache_k,
                         cache_v, req_to_token_indexs, b_req_idx,

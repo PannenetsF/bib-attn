@@ -1,24 +1,26 @@
-import torch
 import math
-from bib_decoding import bib_decoding, bib_gqa_ref_request_max_reduce, bib_gqa_ref_qkv_score_kernel
+
+import torch
+
+from bib_decoding import bib_gqa_ref_request_max_reduce, bib_gqa_ref_qkv_score_kernel
 
 
 @torch.no_grad()
 def bib_decoding_debug(
-    q_tensor,
-    k_tensor,
-    v_tensor,
-    score_tensor,
-    request_to_block,
-    block_to_request,
-    block_to_start,
-    block_to_length,
-    block_to_chunk,
-    sm_scale,
-    deno_tensor=None,
-    nume_tensor=None,
-    CHUNK_SIZE=64,
-    step=None
+        q_tensor,
+        k_tensor,
+        v_tensor,
+        score_tensor,
+        request_to_block,
+        block_to_request,
+        block_to_start,
+        block_to_length,
+        block_to_chunk,
+        sm_scale,
+        deno_tensor=None,
+        nume_tensor=None,
+        CHUNK_SIZE=64,
+        step=None
 ):
     r'''
     step 1: 
@@ -30,7 +32,6 @@ def bib_decoding_debug(
     batch_size = q_tensor.shape[0]
     head_num = q_tensor.shape[1]
     head_dim = q_tensor.shape[2]
-
 
     if not deno_tensor:
         deno_tensor = torch.zeros((block_num, head_num, 2), dtype=torch.float32, device=q_tensor.device)
@@ -67,11 +68,9 @@ def bib_decoding_debug(
         HEAD_DIM=head_dim,
         ROUND_CHUNK_NUM=2 ** (math.ceil(math.log2(chunk_num)))
     )
-    
-    
-    
+
     if step == 2: return score_tensor
-    
+
 
 def _cos_of_tensors(a, b):
     assert a.shape == b.shape, f'{a.shape} vs {b.shape}'
@@ -79,15 +78,16 @@ def _cos_of_tensors(a, b):
     total_cos = torch.nn.functional.cosine_similarity(a.reshape(B, -1), b.reshape(B, -1), dim=-1).mean()
     return total_cos
 
+
 def bib_step1(
-    q_tensor,
-    k_tensor,
-    v_tensor,
-    block_to_request,
-    block_to_start,
-    block_to_length,
-    block_to_chunk,
-    sm_scale
+        q_tensor,
+        k_tensor,
+        v_tensor,
+        block_to_request,
+        block_to_start,
+        block_to_length,
+        block_to_chunk,
+        sm_scale
 ):
     block_num = block_to_request.shape[0]
     batch_size = q_tensor.shape[0]
@@ -99,103 +99,103 @@ def bib_step1(
 
     block_idx = 0
     for req, start, length, chunk in zip(block_to_request, block_to_start, block_to_length, block_to_chunk):
-        q_vec = q_tensor[req] # H, h
-        q_mat = q_vec.reshape(head_num, 1, h) # H, 1, h
+        q_vec = q_tensor[req]  # H, h
+        q_mat = q_vec.reshape(head_num, 1, h)  # H, 1, h
         l_start = chunk * chunk_size
         l_end = min(l_start + chunk_size, length)
-        k_mat = k_tensor[start + l_start : start + l_end] # L, H, h
-        k_mat = k_mat.permute(1, 2, 0).contiguous() # H, h, L
-        score_mat = sm_scale * torch.matmul(q_mat, k_mat) # H, 1, L
+        k_mat = k_tensor[start + l_start: start + l_end]  # L, H, h
+        k_mat = k_mat.permute(1, 2, 0).contiguous()  # H, h, L
+        score_mat = sm_scale * torch.matmul(q_mat, k_mat)  # H, 1, L
         score_mat = score_mat.reshape(head_num, l_end - l_start)
 
-        score_max = score_mat.max(dim=1, keepdim=True)[0] # H, 
-        score_exp = (score_mat - score_max).exp() # H, L
+        score_max = score_mat.max(dim=1, keepdim=True)[0]  # H,
+        score_exp = (score_mat - score_max).exp()  # H, L
         score_exp_sum = score_exp.sum(dim=1)
 
-        v_mat = v_tensor[start + l_start : start + l_end] # L, H, h
-        v_mat = v_mat.permute(1, 2, 0).contiguous() # H, h, L
-        score_exp = score_exp.reshape(head_num, 1, l_end - l_start) # H, 1, L
-        score_exp_v = (v_mat * score_exp).sum(dim=2) # H, h
-        
+        v_mat = v_tensor[start + l_start: start + l_end]  # L, H, h
+        v_mat = v_mat.permute(1, 2, 0).contiguous()  # H, h, L
+        score_exp = score_exp.reshape(head_num, 1, l_end - l_start)  # H, 1, L
+        score_exp_v = (v_mat * score_exp).sum(dim=2)  # H, h
+
         deno_tensor[block_idx, :, 0] = score_max[:, 0]
         deno_tensor[block_idx, :, 1] = score_exp_sum
 
         nume_tensor[block_idx] = score_exp_v
-        
+
         block_idx += 1
     return deno_tensor, nume_tensor
 
 
 def bib_step2(
-    deno_tensor,
-    nume_tensor,
-    request_to_block,
-    batch_size,
-    head_num,
-    head_dim
+        deno_tensor,
+        nume_tensor,
+        request_to_block,
+        batch_size,
+        head_num,
+        head_dim
 ):
     score_tensor = torch.zeros((batch_size, head_num, head_dim), dtype=torch.float32, device=torch.device(0))
     for batch_idx in range(batch_size):
         blocks = request_to_block[batch_idx]
         blocks = blocks[blocks != -1]
-        s_max = deno_tensor[blocks, :, 0] # L, H
-        s_exp_sum = deno_tensor[blocks, :, 1] # L, H
-        s_exp_v = nume_tensor[blocks, :, :] # L, H, h
+        s_max = deno_tensor[blocks, :, 0]  # L, H
+        s_exp_sum = deno_tensor[blocks, :, 1]  # L, H
+        s_exp_v = nume_tensor[blocks, :, :]  # L, H, h
 
-        g_max = s_max.max(dim=0, keepdim=True)[0] # H
-        rescale = (s_max - g_max).exp() # L, H
+        g_max = s_max.max(dim=0, keepdim=True)[0]  # H
+        rescale = (s_max - g_max).exp()  # L, H
         s_exp_sum *= rescale
-        s_exp_sum = s_exp_sum.sum(dim=0).reshape(head_dim, 1) # H, 1
-        s_exp_v = s_exp_v * rescale.unsqueeze(-1) # L, H, h
-        s_exp_v = s_exp_v.sum(dim=0) # H, h
-        score = s_exp_v / s_exp_sum 
+        s_exp_sum = s_exp_sum.sum(dim=0).reshape(head_dim, 1)  # H, 1
+        s_exp_v = s_exp_v * rescale.unsqueeze(-1)  # L, H, h
+        s_exp_v = s_exp_v.sum(dim=0)  # H, h
+        score = s_exp_v / s_exp_sum
         score_tensor[batch_idx] = score
 
     return score_tensor
 
 
 def decoding(
-    q_tensor,
-    k_tensor,
-    v_tensor,
-    k_length,
-    k_start,
-    sm_scale,
+        q_tensor,
+        k_tensor,
+        v_tensor,
+        k_length,
+        k_start,
+        sm_scale,
 ):
     bs, H, h = q_tensor.shape
     max_L = k_length.max()
     sm_mat = torch.zeros((bs, H, max_L), dtype=torch.float32, device=torch.device('cuda:0'))
 
     for bidx in range(bs):
-        q_vec = q_tensor[bidx] # H, h
+        q_vec = q_tensor[bidx]  # H, h
         start = k_start[bidx]
         dur = k_length[bidx]
-        k_vec = k_tensor[start : start + dur] # L, H, h
+        k_vec = k_tensor[start: start + dur]  # L, H, h
 
         q_vec = q_vec.reshape(H, h, 1)
-        k_vec = k_vec.permute(1, 0, 2).contiguous() # H, L, h
+        k_vec = k_vec.permute(1, 0, 2).contiguous()  # H, L, h
 
-        sm_mat[bidx, :, :dur] = torch.matmul(k_vec, q_vec).reshape(H, dur) # H, L
+        sm_mat[bidx, :, :dur] = torch.matmul(k_vec, q_vec).reshape(H, dur)  # H, L
         sm_mat[bidx, :, dur:] = -1e9
-    
+
     sm_mat *= sm_scale
     sm_mat = sm_mat.softmax(dim=-1)
 
     attn = torch.zeros((bs, H, h), dtype=torch.float32, device=torch.device('cuda:0'))
     for bidx in range(bs):
-        sm = sm_mat[bidx] # H, L
+        sm = sm_mat[bidx]  # H, L
         sm = sm.permute(1, 0).contiguous().reshape(-1, H, 1)
 
         start = k_start[bidx]
         dur = k_length[bidx]
-        v_vec = v_tensor[start : start + dur] # L, H, h
+        v_vec = v_tensor[start: start + dur]  # L, H, h
 
         score = sm[:dur] * v_vec
-        score = score.sum(dim=0) # H, h
+        score = score.sum(dim=0)  # H, h
         attn[bidx] = score
 
-    return attn    
-    
+    return attn
+
 
 if __name__ == "__main__":
     torch.manual_seed(0)
@@ -210,7 +210,7 @@ if __name__ == "__main__":
     q_shape = (bs, H, h)
     k_shape = (D, H, h)
     score_shape = (bs, H, h)
-    
+
     q_tensor = torch.randn(q_shape, dtype=torch.float32).cuda()
     k_tensor = torch.randn(k_shape, dtype=torch.float32).cuda()
     v_tensor = torch.randn(k_shape, dtype=torch.float32).cuda()
@@ -257,7 +257,7 @@ if __name__ == "__main__":
         block_to_start,
         block_to_length,
         block_to_chunk,
-        sm_scale=1/math.sqrt(H),
+        sm_scale=1 / math.sqrt(H),
         CHUNK_SIZE=chunk_size,
         step=1
     )
@@ -270,7 +270,7 @@ if __name__ == "__main__":
         block_to_start,
         block_to_length,
         block_to_chunk,
-        sm_scale=1/math.sqrt(H),
+        sm_scale=1 / math.sqrt(H),
     )
 
     assert _cos_of_tensors(deno_torch, deno) > 0.99, 'failed at step 1'
@@ -286,7 +286,7 @@ if __name__ == "__main__":
         block_to_start,
         block_to_length,
         block_to_chunk,
-        sm_scale=1/math.sqrt(H),
+        sm_scale=1 / math.sqrt(H),
         CHUNK_SIZE=chunk_size,
         step=2
     )
@@ -304,6 +304,7 @@ if __name__ == "__main__":
         v_tensor,
         k_length,
         k_start,
-        sm_scale=1/math.sqrt(H)
+        sm_scale=1 / math.sqrt(H)
     )
-    assert _cos_of_tensors(score_torch, score_ref) > 0.99, f'failed at  validation {_cos_of_tensors(score_torch, score_ref)}'
+    assert _cos_of_tensors(score_torch,
+                           score_ref) > 0.99, f'failed at  validation {_cos_of_tensors(score_torch, score_ref)}'

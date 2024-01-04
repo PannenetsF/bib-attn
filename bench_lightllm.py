@@ -6,10 +6,11 @@ import torch
 import triton
 
 from bib_decoding import bib_decoding
+from gqa_decoding import gqa_token_decode_attention_flash_decoding
 from lightllm_score import lightllm_attention
-from gqa_decoding import  gqa_token_decode_attention_flash_decoding
+from flash_decoding import token_decode_attention_flash_decoding
 
-BENCH_TERM = ['lightllm', 'bib', 'gqa']
+BENCH_TERM = ['lightllm', 'bib', 'gqa', 'flash']
 
 ARGS_TERMS = {
     'batch': int,
@@ -131,7 +132,49 @@ def prepare_gqa(min_length, length, batch, H, h, chunk, mean, std, outlier):
     b_seqlen = torch.zeros(batch, dtype=torch.int32)
     for i in range(batch):
         b_seqlen[i] = k_length[i]
-    return q_tensor, k_cache, v_cache, output_tensor, b_seqlen, req_to_tokens, b_req_idx, batch, length, H, H
+
+    BLOCK_SEQ = chunk
+    mid_o = torch.empty([batch, H, length // BLOCK_SEQ + 1, h], dtype=torch.float32,
+                        device="cuda")
+    mid_o_logexpsum = torch.empty([batch, H, length // BLOCK_SEQ + 1], dtype=torch.float32,
+                                  device="cuda")
+    return q_tensor, k_cache, v_cache, output_tensor, mid_o, mid_o_logexpsum, b_seqlen, req_to_tokens, b_req_idx, batch, length, H, h
+
+
+def prepare_flash(min_length, length, batch, H, h, chunk, mean, std, outlier):
+    k_norm_length = torch.randn(size=(batch,)) * std + mean
+    k_length = (k_norm_length.clamp(0, 1) * length).round().to(torch.int32).clamp(min_length, length)
+    num_outlier = math.ceil(outlier * batch)
+    idx_outlier = torch.multinomial(torch.ones(batch) / batch, num_outlier, replacement=False)
+    for idx in idx_outlier:
+        k_length[idx] = length
+    D = 2 ** k_length.sum().log2().ceil().to(torch.int32)
+    k_start = k_length.cumsum(dim=0)
+    k_start = torch.cat([torch.tensor([0]), k_start[:-1]]).contiguous()
+    q_tensor = torch.randn(batch, H, h, dtype=torch.float32)
+    k_cache = torch.randn(D, H, h, dtype=torch.float32)
+    v_cache = torch.randn(D, H, h, dtype=torch.float32)
+    length = k_length.max().item()
+    output_tensor = torch.ones_like(q_tensor)
+    req_to_tokens = torch.zeros(batch, length, dtype=torch.int32)
+    for i in range(batch):
+        req_to_tokens[i][:k_length[i]] = torch.arange(0, k_length[i]) + k_start[i]
+    b_req_idx = torch.zeros(batch, dtype=torch.int32)
+    for i in range(batch):
+        b_req_idx[i] = i
+    b_start_loc = torch.zeros(batch, dtype=torch.int32)
+    for i in range(batch):
+        b_start_loc[i] = k_start[i]
+    b_seqlen = torch.zeros(batch, dtype=torch.int32)
+    for i in range(batch):
+        b_seqlen[i] = k_length[i]
+
+    BLOCK_SEQ = chunk
+    mid_o = torch.empty([batch, H, length // BLOCK_SEQ + 1, h], dtype=torch.float32,
+                        device="cuda")
+    mid_o_logexpsum = torch.empty([batch, H, length // BLOCK_SEQ + 1], dtype=torch.float32,
+                                  device="cuda")
+    return q_tensor, k_cache, v_cache, output_tensor, mid_o, mid_o_logexpsum, req_to_tokens, b_req_idx, b_seqlen, batch, length, H, h, chunk
 
 
 def parse_args():
@@ -170,12 +213,16 @@ def _get_split(args):
         end = 10 ** end
     split = np.linspace(start, end, num)
     if pot:
-        split = 2 ** (np.ceil(np.log2(split)))
+        split = 2 ** (np.ceil(np.log2(split - 1)))
         split = split.astype(np.int32)
     dtype = ARGS_TERMS[term]
     split = split.tolist()
     split = [dtype(s) for s in split]
-    return split
+    uniq = []
+    for s in split:
+        if s not in uniq:
+            uniq.append(s)
+    return uniq
 
 
 def _get_name_and_fn(args, split):
@@ -217,6 +264,9 @@ def _get_name_and_fn(args, split):
             elif provider == 'gqa':
                 prepare_fn = prepare_gqa
                 call_fn = gqa_token_decode_attention_flash_decoding
+            elif provider == 'flash':
+                prepare_fn = prepare_flash
+                call_fn = token_decode_attention_flash_decoding
             else:
                 raise NotImplementedError
             kwargs = {}
