@@ -6,14 +6,12 @@ import numpy as np
 import torch
 import triton
 
-from bib_gqa_decoding import bib_gqa_decoding, BiBConfig
+from bib_gqa_decoding import bib_gqa_decoding, bib_gqa_decoding_stage1
 from gqa_decoding import gqa_token_decode_attention_flash_decoding
 
-BENCH_TERM = ['gqa']
-bib_gqa_fns = dict(gqa=gqa_token_decode_attention_flash_decoding)
-for config in BiBConfig().all_config():
-    BENCH_TERM.append(f'bib_{config}')
-    bib_gqa_fns[f'bib_{config}'] = partial(bib_gqa_decoding, config=config)
+BENCH_TERM = ['gqa', 'bib', 'bib_stage1']
+bib_gqa_fns = dict(gqa=gqa_token_decode_attention_flash_decoding, bib=bib_gqa_decoding,
+                   bib_stage1=bib_gqa_decoding_stage1)
 
 ARGS_TERMS = {
     'batch': int,
@@ -106,8 +104,12 @@ def prepare_bib_gqa(min_length, length, batch, G, H, h, chunk, mean, std, outlie
     block_to_start = torch.tensor(block_to_start, dtype=torch.int32).cuda()
     block_to_chunk = torch.tensor(block_to_chunk, dtype=torch.int32).cuda()
     block_to_request = torch.tensor(block_to_request, dtype=torch.int32).cuda()
+    block_num = block_to_request.shape[0]
+    deno_tensor = torch.zeros((block_num, H, 2), dtype=torch.float32, device=q_tensor.device)
+    nume_tensor = torch.zeros((block_num, H, h), dtype=torch.float32, device=q_tensor.device)
+
     args = q_tensor, k_tensor, v_tensor, score_tensor, request_to_block, block_to_request, block_to_start, block_to_length, block_to_chunk, 1 / math.sqrt(
-        H), None, None, G, chunk
+        H), deno_tensor, nume_tensor, G, chunk
     return args
 
 
