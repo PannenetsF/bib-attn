@@ -6,12 +6,12 @@ import numpy as np
 import torch
 import triton
 
-from bib_gqa_decoding import bib_gqa_decoding, bib_gqa_decoding_stage1
+from bib_gqa_decoding import bib_gqa_decoding
 from gqa_decoding import gqa_token_decode_attention_flash_decoding
 
-BENCH_TERM = ['gqa', 'bib', 'bib_stage1']
-bib_gqa_fns = dict(gqa=gqa_token_decode_attention_flash_decoding, bib=bib_gqa_decoding,
-                   bib_stage1=bib_gqa_decoding_stage1)
+BENCH_TERM = ['gqa', 'bib', ]
+bib_gqa_fns = dict(gqa=gqa_token_decode_attention_flash_decoding, bib=bib_gqa_decoding,)
+                   # bib_stage1=bib_gqa_decoding_stage1)
 
 ARGS_TERMS = {
     'batch': int,
