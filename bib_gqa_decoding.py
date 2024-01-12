@@ -3,6 +3,25 @@ import math
 import triton
 import triton.language as tl
 
+
+def _num_warps(args):
+    chunk_size = args['CHUNK_SIZE']
+    if chunk_size <= 256:
+        return 4
+    else:
+        return 2
+
+
+def _num_stages(args):
+    chunk_size = args['CHUNK_SIZE']
+    if chunk_size <= 256:
+        return 4
+    else:
+        return 2
+
+
+@triton.heuristics(values={'num_warps': lambda args: _num_warps(args)})
+@triton.heuristics(values={'num_stages': lambda args: _num_stages(args)})
 @triton.jit
 def bib_gqa_qkv_mul_kernel(
         q_tensor, q_bs, q_H, q_h,
@@ -164,9 +183,7 @@ def bib_gqa_decoding(
         CHUNK_SIZE=CHUNK_SIZE,
         GROUP_SIZE=GROUP_SIZE,
         POOL_SIZE=pool_size,
-        num_warps=4,
     )
-
 
     grid = lambda META: (2 ** (math.ceil(math.log2(batch_size))), head_num)
     bib_gqa_ref_request_max_reduce[grid](

@@ -190,10 +190,10 @@ def gqa_token_decode_attention_flash_decoding(q, cache_k, cache_v, out, mid_o, m
 
     assert len(block_batch_ids) == len(block_start_indexes)
 
-    # mid_o = torch.empty([batch_size, q_head_num, max_len_in_batch // BLOCK_SEQ + 1, head_dim], dtype=torch.float32,
-    #                     device="cuda")
-    # mid_o_logexpsum = torch.empty([batch_size, q_head_num, max_len_in_batch // BLOCK_SEQ + 1], dtype=torch.float32,
-    #                               device="cuda")
+    mid_o = torch.empty([batch_size, q_head_num, max_len_in_batch // BLOCK_SEQ + 1, head_dim], dtype=torch.float32,
+                        device="cuda")
+    mid_o_logexpsum = torch.empty([batch_size, q_head_num, max_len_in_batch // BLOCK_SEQ + 1], dtype=torch.float32,
+                                  device="cuda")
 
     flash_decode_stage1(block_batch_ids, block_start_indexes, q.view(calcu_shape1), cache_k,
                         cache_v, req_to_token_indexs, b_req_idx,

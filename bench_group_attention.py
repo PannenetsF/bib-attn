@@ -10,8 +10,8 @@ from bib_gqa_decoding import bib_gqa_decoding
 from gqa_decoding import gqa_token_decode_attention_flash_decoding
 
 BENCH_TERM = ['gqa', 'bib', ]
-bib_gqa_fns = dict(gqa=gqa_token_decode_attention_flash_decoding, bib=bib_gqa_decoding,)
-                   # bib_stage1=bib_gqa_decoding_stage1)
+bib_gqa_fns = dict(gqa=gqa_token_decode_attention_flash_decoding, bib=bib_gqa_decoding, )
+# bib_stage1=bib_gqa_decoding_stage1)
 
 ARGS_TERMS = {
     'batch': int,
@@ -56,10 +56,8 @@ def prepare_gqa(min_length, length, batch, G, H, h, chunk, mean, std, outlier):
         b_seqlen[i] = k_length[i]
 
     BLOCK_SEQ = chunk
-    mid_o = torch.empty([batch, H, length // BLOCK_SEQ + 1, h], dtype=torch.float32,
-                        device="cuda")
-    mid_o_logexpsum = torch.empty([batch, H, length // BLOCK_SEQ + 1], dtype=torch.float32,
-                                  device="cuda")
+    mid_o = None
+    mid_o_logexpsum = None
     return q_tensor, k_cache, v_cache, output_tensor, mid_o, mid_o_logexpsum, b_seqlen, req_to_tokens, b_req_idx, batch, length, H, h
 
 
@@ -105,8 +103,10 @@ def prepare_bib_gqa(min_length, length, batch, G, H, h, chunk, mean, std, outlie
     block_to_chunk = torch.tensor(block_to_chunk, dtype=torch.int32).cuda()
     block_to_request = torch.tensor(block_to_request, dtype=torch.int32).cuda()
     block_num = block_to_request.shape[0]
-    deno_tensor = torch.zeros((block_num, H, 2), dtype=torch.float32, device=q_tensor.device)
-    nume_tensor = torch.zeros((block_num, H, h), dtype=torch.float32, device=q_tensor.device)
+    # deno_tensor = torch.zeros((block_num, H, 2), dtype=torch.float32, device=q_tensor.device)
+    # nume_tensor = torch.zeros((block_num, H, h), dtype=torch.float32, device=q_tensor.device)
+    deno_tensor = None
+    nume_tensor = None
 
     args = q_tensor, k_tensor, v_tensor, score_tensor, request_to_block, block_to_request, block_to_start, block_to_length, block_to_chunk, 1 / math.sqrt(
         H), deno_tensor, nume_tensor, G, chunk
